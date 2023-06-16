@@ -3,11 +3,13 @@ import sys
 import tensorflow as tf
 from TXT import*
 from Model import tGPT
-from Layers import CustomSchedule,load_weights,lm_loss,cl_loss
+from Layers import ExpSchedule,LinearSchedule,load_weights,lm_loss,cl_loss
 from sklearn.metrics import accuracy_score
 
 import subprocess as sp
 import os
+
+import time
 
 
 if __name__ == '__main__':
@@ -26,7 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--afn', type=str, default='gelu')
     parser.add_argument('--n_train', type=int, default=1497)
     parser.add_argument('--n_valid', type=int, default=374)
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=4)
     parser.add_argument('--l', type=float, default=.5)
     args = parser.parse_args()
     print(args)
@@ -82,26 +84,33 @@ if __name__ == '__main__':
                  n_embd = n_embd,clf_token = clf_token,train = True,freeze_emb = freeze_emb,
                  n_head = n_head,n_layer = n_layer)
     
-    learning_rate = CustomSchedule(warmup_steps = 93*1,decay = 93*3)
+    learning_rate = ExpSchedule(warmup_steps = 20,decay = .005,lr = 6.25e-4)
+    # learning_rate = LinearSchedule(warmup_steps = 93,decay = 93*5,lr = 6.25e-4)
     
     optimizer= tf.keras.optimizers.Adam(
                                             learning_rate = learning_rate,
                                             beta_1=0.9,
                                             beta_2=0.999,
                                             epsilon=1e-08,
-                                            weight_decay=None,
+                                            weight_decay=0.01,
                                             clipvalue=1,
                                             global_clipnorm=1,
                                             jit_compile=True,
                                         )
+    import matplotlib.pyplot as plt
+    plt.plot(learning_rate(tf.range(93*4, dtype=tf.float32)))
+    plt.ylabel('Learning Rate')
+    plt.xlabel('Train Step')
+
     
     for i in validation.take(1):x = i
 
     h = model(x[0])
     model.summary()
     
-    model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd, freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, weights_path = data_dir)
     
+    model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd, freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, weights_path = data_dir, names_path = data_dir)
+    start = time.time()
     for epoch in range(epochs):
         train = train_ds.shuffle(5000).batch(batch)
 
@@ -133,7 +142,8 @@ if __name__ == '__main__':
             
     print(" val:"+acc_(model,validation))
     print(" train:"+acc_(model,train))
-
+end = time.time()
+print(end - start)
 print(round(tf.config.experimental.get_memory_info('GPU:0')["peak"]*1e-6) )
         
     

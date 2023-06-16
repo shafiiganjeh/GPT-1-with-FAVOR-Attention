@@ -13,8 +13,8 @@ class norm(tf.keras.layers.Layer):
 
   def build(self, x):
       n_state = x[-1]
-      self.g = self.add_weight("g", shape = [n_state], initializer=tf.constant_initializer(1))
-      self.b = self.add_weight("b", shape = [n_state], initializer=tf.constant_initializer(0))
+      self.g = self.add_weight("g_n", shape = [n_state], initializer=tf.constant_initializer(1))
+      self.b = self.add_weight("b_n", shape = [n_state], initializer=tf.constant_initializer(0))
 
   def call(self, x):
       u = tf.math.reduce_mean(x, axis = self.axis, keepdims=True)
@@ -61,17 +61,17 @@ class embedding(tf.keras.layers.Layer):
     def build(self, x):
         if self.freeze_emb:
             
-            self.w_embed_f2 = self.add_weight(shape = [self.n_ctx, self.n_embd], 
+            self.w_embed_f2 = self.add_weight("we_1",shape = [self.n_ctx, self.n_embd], 
                                      initializer = tf.random_normal_initializer(stddev=0.02, seed=None),
                                      trainable = False)
 
 
-            self.w_embed_t = self.add_weight(shape = [self.n_special, self.n_embd], 
+            self.w_embed_t = self.add_weight("we_2",shape = [self.n_special, self.n_embd], 
                                      initializer = tf.random_normal_initializer(stddev=0.02, seed=None),
                                      trainable = True)
             
             
-            self.w_embed_f1 = self.add_weight(shape = [self.n_vocab, self.n_embd], 
+            self.w_embed_f1 = self.add_weight("we_3",shape = [self.n_vocab, self.n_embd], 
                                      initializer = tf.random_normal_initializer(stddev=0.02, seed=None),
                                      trainable = False)
             
@@ -125,17 +125,18 @@ class conv1d(tf.keras.layers.Layer):
         self.nx = x[-1]
         self.w = self.add_weight("w", 
                                  shape = [self.rf, self.nx, self.nf], 
-                                 initializer = self.w_init)
+                                 initializer = self.w_init,trainable = self.train)
         self.b = self.add_weight("b", 
                                  shape = [self.nf], 
-                                 initializer = self.b_init)
+                                 initializer = self.b_init,trainable = self.train)
         
     def call(self, x):
+        
+        
         if self.rf == 1: 
-            c = tf.reshape(
-                tf.matmul(tf.reshape(x, [-1, self.nx]), tf.reshape(self.w, [-1, self.nf]))
-                +self.b, shape_list(x)[:-1]+[self.nf]
-                )
+
+            c = tf.einsum('ble,reo->blo', x, self.w)+self.b
+            
         else: 
             c = tf.nn.conv1d(x, self.w, stride=1, padding = self.pad)+self.b
         return c
@@ -151,6 +152,7 @@ class MHA(tf.keras.layers.Layer):
         rdrop = 0.0,
         scale = False,
         train = False,
+        LoRA = True,
         **kwargs,
     ):
         super(MHA,self).__init__(**kwargs)
@@ -160,11 +162,17 @@ class MHA(tf.keras.layers.Layer):
         self.rdrop = rdrop
         self.scale = scale
         self.train = train
+        self.LoRA = LoRA
         
     def build(self, x):
         assert self.key_dim % self.num_heads == 0, "K/Q dimension not divisible by number of heads"
-        self.conv_inp = conv1d(nf = self.key_dim*3, train = self.train)
-        self.conv_out = conv1d(nf = self.key_dim, train = self.train)
+        if self.LoRA:
+            self.conv_inp = conv1d_LoRA(nf = self.key_dim*3, train = self.train)
+            self.conv_out = conv1d_LoRA(nf = self.key_dim, train = self.train)
+        else:
+            self.conv_inp = conv1d(nf = self.key_dim*3, train = self.train)
+            self.conv_out = conv1d(nf = self.key_dim, train = self.train)
+            
         self.mask = mask()
         
     def split_states(self,x, n):
@@ -179,14 +187,10 @@ class MHA(tf.keras.layers.Layer):
         return x
     
     def split_heads(self,x, n, k=False):
-        if k:
-            return tf.transpose(self.split_states(x, n), [0, 2, 3, 1])
-        else:
-            return tf.transpose(self.split_states(x, n), [0, 2, 1, 3])
+        return tf.transpose(self.split_states(x, n), [0, 2, 1, 3])
         
     def _attn(self,q, k, v, train=False):
-        w = tf.matmul(q, k)
-        
+        w = tf.einsum('...ij,...kj->...ik', q, k)
         if self.scale:
             n_state = shape_list(v)[-1]
             w = w*tf.math.rsqrt(tf.cast(n_state, tf.float32))
@@ -196,7 +200,7 @@ class MHA(tf.keras.layers.Layer):
         
         w = self.dropout(w,drop = self.pdrop )
         
-        a = tf.matmul(w, v)
+        a = tf.einsum('...ij,...jk->...ik', w, v)
         return a
     
     def merge_heads(self,x):
@@ -210,7 +214,7 @@ class MHA(tf.keras.layers.Layer):
         q, k, v = tf.split(x, 3, 2)
         
         q = self.split_heads(q, self.num_heads)
-        k = self.split_heads(k, self.num_heads,k=True)
+        k = self.split_heads(k, self.num_heads)
         v = self.split_heads(v, self.num_heads)
         
         a = self._attn(q, k, v, train = self.train)
@@ -227,6 +231,7 @@ class MLP(tf.keras.layers.Layer):
         n_state,
         train,
         mdrop = 0.,
+        LoRA = True,
         afn = 'gelu'
     ):
         super(MLP, self).__init__()
@@ -234,12 +239,19 @@ class MLP(tf.keras.layers.Layer):
         self.train = train
         self.n_state = n_state
         self.drop = mdrop
+        self.LoRA = LoRA
+        
 
     def build(self, x):
         self.nx = x[-1]
         self.act = act_fns[self.afn]
-        self.c_fc = conv1d(nf = self.n_state, train = self.train, rf = 1)
-        self.c_proj = conv1d(nf = self.nx, train = self.train, rf = 1)
+        if self.LoRA:
+            self.c_fc = conv1d_LoRA(nf = self.n_state, train = self.train, rf = 1)
+            self.c_proj = conv1d_LoRA(nf = self.nx, train = self.train, rf = 1)
+        else:
+            self.c_fc = conv1d(nf = self.n_state, train = self.train, rf = 1)
+            self.c_proj = conv1d(nf = self.nx, train = self.train, rf = 1)
+
         
     def dropout(self, x, pdrop, train):
         if self.train and pdrop > 0:
@@ -287,7 +299,65 @@ class block(tf.keras.layers.Layer):
       n = self.norm1(a+x)
       m = self._mlp(n)
       h = self.norm2(m+n)
-      return h    
+      return h  
+
+
+class conv1d_LoRA(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        nf,
+        rf = 1,
+        R = 4,
+        scale = 32,
+        w_init = tf.random_normal_initializer(stddev=0.02),
+        b_init = tf.constant_initializer(0),
+        pad = 'VALID',
+        train = False,
+    ):
+        super(conv1d_LoRA, self).__init__()
+        self.rf = rf
+        self.nf = nf
+        self.w_init = w_init
+        self.b_init = b_init
+        self.pad = pad
+        self.train = train
+        self.R = R
+        self.scale = scale 
+
+    def build(self, x):
+        self.nx = x[-1]
+        self.w = self.add_weight("conv_w", 
+                                 shape = [self.rf, self.nx, self.nf], 
+                                 initializer = self.w_init,trainable = False)
+        self.b = self.add_weight("conv_b", 
+                                 shape = [self.nf], 
+                                 initializer = self.b_init,trainable = self.train)
+        
+        self.A = self.add_weight("LoRA_A", 
+                                 shape = [self.rf, self.R, self.nf], 
+                                 initializer = self.b_init,trainable = self.train)
+        
+        self.B = self.add_weight("LoRA_B", 
+                                 shape = [self.rf, self.nx, self.R], 
+                                 initializer = tf.constant_initializer(0),trainable = self.train)
+        
+    def call(self, x):
+        
+        
+        if self.rf == 1: 
+            
+            c = tf.einsum('ble,reo->blo', x, self.w + 
+                          (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A)) + self.b
+              
+        else: 
+            
+            c = tf.nn.conv1d(x, self.w + 
+                             (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A), stride=1, padding = self.pad) + self.b
+            
+        return c
+    
+    
+    
     
     
     

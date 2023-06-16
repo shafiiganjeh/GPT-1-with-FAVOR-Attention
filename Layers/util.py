@@ -16,8 +16,8 @@ act_fns = {
     'gelu':gelu
 }
 
-
-class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+# lr = 6.25e-5
+class LinearSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
   def __init__(self, warmup_steps,decay, lr = 6.25e-5):
     super().__init__()
     self.lr = lr
@@ -32,14 +32,35 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     return tf.math.minimum(arg1, arg2)
 
 
+class ExpSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+  def __init__(self, warmup_steps,decay = 1.5,lr = 6.25e-5):
+    super().__init__()
+
+    self.lr = lr
+    self.warmup_steps = warmup_steps
+    self.decay = decay
+
+  def __call__(self, step):
+    step = tf.cast(step, dtype=tf.float32)
+    arg1 = (step/self.warmup_steps) * self.lr
+    # arg2 = tf.math.exp(step - self.warmup_steps)*self.lr
+    # arg2 = (tf.math.maximum(1,step - self.warmup_steps+1)**-self.decay)*self.lr
+    e = tf.math.maximum(0,step - self.warmup_steps)
+    arg2 = tf.math.exp(-e*self.decay)*self.lr
+
+    return tf.math.minimum(arg1, arg2)
+
+
+
 def shape_list(x):
     ps = tf.shape(x)
     ts = tf.shape(x)
     return [ts[i] if ps[i] is None else ps[i] for i in range(len(ps))]
 
 
-def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights"):
-    
+def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights", names_path = "./weights"):
+    L = [[i.name for i in j.weights[:]] for j in model.layers[:]]
+    # names = {}
     np.random.seed(123)
     shapes = json.load(open(weights_shapes_path+"/params_shapes.json"))
     offsets = np.cumsum([np.prod(shape) for shape in shapes])
@@ -49,17 +70,37 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
     init_params[0] = init_params[0][:n_ctx]
     if freeze_emb:
         init_params.insert(0, (np.random.randn(n_special, n_embd)*0.02).astype(np.float32))
+        with open(names_path+'names_emb_f.json', 'r') as openfile:
+            NAMES = json.load(openfile)
     else:
         init_params[0] = np.concatenate([init_params[1], (np.random.randn(n_special, n_embd)*0.02).astype(np.float32), init_params[0]], 0)
         del init_params[1]
-    c = 0
-    for i in range(len(model.layers)):
-        if c == len(init_params):
-            break
-        for j in range(len(model.layers[i].weights)):
-            model.layers[i].weights[j].assign(init_params[c])
-            c = c+1
-    
+        with open(names_path+'names_emb.json', 'r') as openfile:
+            NAMES = json.load(openfile)
+    assg = 0
+    for n in range(len(init_params)):
+        for I,i in enumerate(L):
+            for J,j in enumerate(i):
+                if NAMES[str(n)] in j:
+                    model.layers[I].weights[J].assign(init_params[n])
+                    assg = assg + 1
+    print("weights assigned: " + str(assg) + "/" + str(len(init_params)))           
+    # c = 0
+    # for i in range(len(model.layers)):
+    #     if c == len(init_params):
+    #         break
+    #     for j in range(len(model.layers[i].weights)):
+    #         if "LoRA_A" in model.layers[i].weights[j].name or "LoRA_B" in model.layers[i].weights[j].name:
+    #             0
+    #         else:
+    #             model.layers[i].weights[j].assign(init_params[c])
+                
+                # names[c] = L[i][j]
+                # print(model.layers[i].weights[j].shape)
+                # c = c+1
+    # print(c)
+    # with open('names_emb.json', 'w') as fp:
+    #     json.dump(names, fp)
     return model
 
 @tf.function
