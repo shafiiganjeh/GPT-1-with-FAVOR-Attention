@@ -21,7 +21,8 @@ class tGPT(tf.keras.Model):
         clf_pdrop = .1,
         train = True,
         freeze_emb = True,
-        scale = True
+        scale = True,
+        LoRA = False
     ):
         super().__init__()
         self.train = train  
@@ -43,7 +44,8 @@ class tGPT(tf.keras.Model):
         for i in range(self.n_layer ):
             self._block[i] = block(train = self.train,n_head = self.n_head,
                           mdrop = mdrop,pdrop = pdrop,
-                          rdrop = rdrop,scale = scale
+                          rdrop = rdrop,scale = scale,
+                          LoRA = LoRA
                           )
             
         self.clf = tf.keras.layers.Dense(1,bias_initializer = 'zeros',kernel_initializer = tf.random_normal_initializer(stddev=0.02, seed=123))

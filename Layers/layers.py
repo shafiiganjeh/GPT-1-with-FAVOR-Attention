@@ -123,10 +123,10 @@ class conv1d(tf.keras.layers.Layer):
 
     def build(self, x):
         self.nx = x[-1]
-        self.w = self.add_weight("w", 
+        self.w = self.add_weight("conv_w", 
                                  shape = [self.rf, self.nx, self.nf], 
                                  initializer = self.w_init,trainable = self.train)
-        self.b = self.add_weight("b", 
+        self.b = self.add_weight("conv_b", 
                                  shape = [self.nf], 
                                  initializer = self.b_init,trainable = self.train)
         
@@ -142,6 +142,63 @@ class conv1d(tf.keras.layers.Layer):
         return c
     
     
+class conv1d_LoRA(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        nf,
+        rf = 1,
+        R = 4,
+        scale = 32,
+        w_init = tf.random_normal_initializer(stddev=0.02),
+        b_init = tf.constant_initializer(0),
+        pad = 'VALID',
+        train = False,
+    ):
+        super(conv1d_LoRA, self).__init__()
+        self.rf = rf
+        self.nf = nf
+        self.w_init = w_init
+        self.b_init = b_init
+        self.pad = pad
+        self.train = train
+        self.R = R
+        self.scale = scale 
+        
+
+    def build(self, x):
+        self.nx = x[-1]
+        self.w = self.add_weight("conv_w", 
+                                 shape = [self.rf, self.nx, self.nf], 
+                                 initializer = self.w_init,trainable = False)
+        self.b = self.add_weight("conv_b", 
+                                 shape = [self.nf], 
+                                 initializer = self.b_init,trainable = self.train)
+        
+        self.A = self.add_weight("LoRA_A", 
+                                 shape = [self.rf, self.R, self.nf], 
+                                 initializer = self.b_init,trainable = self.train)
+        
+        self.B = self.add_weight("LoRA_B", 
+                                 shape = [self.rf, self.nx, self.R], 
+                                 initializer = tf.constant_initializer(0),trainable = self.train)
+        
+    def call(self, x):
+        
+        
+        if self.rf == 1: 
+            
+            c = tf.einsum('ble,reo->blo', x, self.w + 
+                          (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A)) + self.b
+              
+        else: 
+            
+            c = tf.nn.conv1d(x, self.w + 
+                             (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A), stride=1, padding = self.pad) + self.b
+            
+        return c
+    
+    
+    
     
 class MHA(tf.keras.layers.Layer):
     def __init__(
@@ -152,7 +209,7 @@ class MHA(tf.keras.layers.Layer):
         rdrop = 0.0,
         scale = False,
         train = False,
-        LoRA = True,
+        LoRA = False,
         **kwargs,
     ):
         super(MHA,self).__init__(**kwargs)
@@ -231,7 +288,7 @@ class MLP(tf.keras.layers.Layer):
         n_state,
         train,
         mdrop = 0.,
-        LoRA = True,
+        LoRA = False,
         afn = 'gelu'
     ):
         super(MLP, self).__init__()
@@ -272,7 +329,8 @@ class block(tf.keras.layers.Layer):
                pdrop = .0,
                rdrop = .0,
                mdrop = .0,
-               scale = True
+               scale = True,
+               LoRA = False
                ):
     super(block, self).__init__()
     self.train = train
@@ -281,16 +339,18 @@ class block(tf.keras.layers.Layer):
     self.mdrop = mdrop
     self.scale = scale
     self.n_head = n_head
+    self.LoRA = LoRA
 
   def build(self, x):
       nx = x[-1]
       self._mha = MHA(pdrop = self.pdrop, rdrop = self.rdrop,
                       key_dim = nx, num_heads = self.n_head, 
-                      train = self.train, scale = self.scale)
+                      train = self.train, scale = self.scale,
+                      LoRA = self.LoRA)
       
       self.norm1 = norm()
       
-      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop)
+      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop,LoRA = self.LoRA)
       
       self.norm2 = norm()
 
@@ -302,62 +362,5 @@ class block(tf.keras.layers.Layer):
       return h  
 
 
-class conv1d_LoRA(tf.keras.layers.Layer):
-    def __init__(
-        self,
-        nf,
-        rf = 1,
-        R = 4,
-        scale = 32,
-        w_init = tf.random_normal_initializer(stddev=0.02),
-        b_init = tf.constant_initializer(0),
-        pad = 'VALID',
-        train = False,
-    ):
-        super(conv1d_LoRA, self).__init__()
-        self.rf = rf
-        self.nf = nf
-        self.w_init = w_init
-        self.b_init = b_init
-        self.pad = pad
-        self.train = train
-        self.R = R
-        self.scale = scale 
-
-    def build(self, x):
-        self.nx = x[-1]
-        self.w = self.add_weight("conv_w", 
-                                 shape = [self.rf, self.nx, self.nf], 
-                                 initializer = self.w_init,trainable = False)
-        self.b = self.add_weight("conv_b", 
-                                 shape = [self.nf], 
-                                 initializer = self.b_init,trainable = self.train)
-        
-        self.A = self.add_weight("LoRA_A", 
-                                 shape = [self.rf, self.R, self.nf], 
-                                 initializer = self.b_init,trainable = self.train)
-        
-        self.B = self.add_weight("LoRA_B", 
-                                 shape = [self.rf, self.nx, self.R], 
-                                 initializer = tf.constant_initializer(0),trainable = self.train)
-        
-    def call(self, x):
-        
-        
-        if self.rf == 1: 
-            
-            c = tf.einsum('ble,reo->blo', x, self.w + 
-                          (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A)) + self.b
-              
-        else: 
-            
-            c = tf.nn.conv1d(x, self.w + 
-                             (self.scale/self.R)*tf.einsum('...ij,...jk->...ik',self.B,self.A), stride=1, padding = self.pad) + self.b
-            
-        return c
-    
-    
-    
-    
     
     

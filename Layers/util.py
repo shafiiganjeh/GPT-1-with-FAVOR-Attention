@@ -33,7 +33,7 @@ class LinearSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 class ExpSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
-  def __init__(self, warmup_steps,decay = 1.5,lr = 6.25e-5):
+  def __init__(self, warmup_steps,decay = .005,lr = 6.25e-5):
     super().__init__()
 
     self.lr = lr
@@ -43,8 +43,6 @@ class ExpSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
   def __call__(self, step):
     step = tf.cast(step, dtype=tf.float32)
     arg1 = (step/self.warmup_steps) * self.lr
-    # arg2 = tf.math.exp(step - self.warmup_steps)*self.lr
-    # arg2 = (tf.math.maximum(1,step - self.warmup_steps+1)**-self.decay)*self.lr
     e = tf.math.maximum(0,step - self.warmup_steps)
     arg2 = tf.math.exp(-e*self.decay)*self.lr
 
@@ -58,7 +56,7 @@ def shape_list(x):
     return [ts[i] if ps[i] is None else ps[i] for i in range(len(ps))]
 
 
-def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights", names_path = "./weights"):
+def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights", names_path = "./weights",LoRA = False):
     L = [[i.name for i in j.weights[:]] for j in model.layers[:]]
     # names = {}
     np.random.seed(123)
@@ -79,28 +77,17 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
             NAMES = json.load(openfile)
     assg = 0
     for n in range(len(init_params)):
+        if LoRA == False:
+           print(NAMES[str(n)])
+           T = NAMES[str(n)].replace("__lo_ra","") 
+           print(T)
         for I,i in enumerate(L):
             for J,j in enumerate(i):
-                if NAMES[str(n)] in j:
+                if T in j:
                     model.layers[I].weights[J].assign(init_params[n])
                     assg = assg + 1
     print("weights assigned: " + str(assg) + "/" + str(len(init_params)))           
-    # c = 0
-    # for i in range(len(model.layers)):
-    #     if c == len(init_params):
-    #         break
-    #     for j in range(len(model.layers[i].weights)):
-    #         if "LoRA_A" in model.layers[i].weights[j].name or "LoRA_B" in model.layers[i].weights[j].name:
-    #             0
-    #         else:
-    #             model.layers[i].weights[j].assign(init_params[c])
-                
-                # names[c] = L[i][j]
-                # print(model.layers[i].weights[j].shape)
-                # c = c+1
-    # print(c)
-    # with open('names_emb.json', 'w') as fp:
-    #     json.dump(names, fp)
+
     return model
 
 @tf.function

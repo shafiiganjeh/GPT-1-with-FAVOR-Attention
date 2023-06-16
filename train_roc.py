@@ -15,6 +15,7 @@ import time
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--prep', type=bool, default=False)
+    parser.add_argument('--lora', type=bool, default=False)
     parser.add_argument('--save_dir', type=str, default='Files/')
     parser.add_argument('--data_dir', type=str, default='Files/')
     parser.add_argument('--val_name', type=str, default='cloze_test_val__spring2016 - cloze_test_ALL_val.csv')
@@ -82,10 +83,11 @@ if __name__ == '__main__':
         
     model = tGPT(n_vocab = n_vocab,n_special = n_special, n_ctx = n_ctx, 
                  n_embd = n_embd,clf_token = clf_token,train = True,freeze_emb = freeze_emb,
-                 n_head = n_head,n_layer = n_layer)
-    
-    learning_rate = ExpSchedule(warmup_steps = 20,decay = .005,lr = 6.25e-4)
-    # learning_rate = LinearSchedule(warmup_steps = 93,decay = 93*5,lr = 6.25e-4)
+                 n_head = n_head,n_layer = n_layer, LoRA = lora)
+    if lora:
+        learning_rate = ExpSchedule(warmup_steps = 20,decay = .005,lr = 6.25e-4)
+    else:
+        learning_rate = LinearSchedule(warmup_steps = 93,decay = 93*5,lr = 6.25e-5)
     
     optimizer= tf.keras.optimizers.Adam(
                                             learning_rate = learning_rate,
@@ -97,12 +99,12 @@ if __name__ == '__main__':
                                             global_clipnorm=1,
                                             jit_compile=True,
                                         )
-    import matplotlib.pyplot as plt
-    plt.plot(learning_rate(tf.range(93*4, dtype=tf.float32)))
-    plt.ylabel('Learning Rate')
-    plt.xlabel('Train Step')
-
     
+    # import matplotlib.pyplot as plt
+    # plt.plot(learning_rate(tf.range(93*4, dtype=tf.float32)))
+    # plt.ylabel('Learning Rate')
+    # plt.xlabel('Train Step')
+
     for i in validation.take(1):x = i
 
     h = model(x[0])
@@ -110,41 +112,41 @@ if __name__ == '__main__':
     
     
     model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd, freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, weights_path = data_dir, names_path = data_dir)
-    start = time.time()
-    for epoch in range(epochs):
-        train = train_ds.shuffle(5000).batch(batch)
+#     start = time.time()
+#     for epoch in range(epochs):
+#         train = train_ds.shuffle(5000).batch(batch)
 
-        print(" val:"+acc_(model,validation))
-        print(" train:"+acc_(model,train))
+#         print(" val:"+acc_(model,validation))
+#         print(" train:"+acc_(model,train))
         
-        l_cum = np.zeros(10)
+#         l_cum = np.zeros(10)
   
-        for step, (x_batch_train, y_batch_train) in enumerate(train):
+#         for step, (x_batch_train, y_batch_train) in enumerate(train):
 
-            with tf.GradientTape() as tape:
+#             with tf.GradientTape() as tape:
 
-                H = model(x_batch_train, training=True)  # Logits for this minibatch
+#                 H = model(x_batch_train, training=True)  # Logits for this minibatch
 
-                # Compute the loss value for this minibatch.
-                l1 = lm_loss(x_batch_train[0], H[0], H[1],n_ctx = n_ctx)
-                l2 = cl_loss(y_batch_train, H[2])
-                train_loss = tf.reduce_mean(l2) + l* tf.reduce_mean(l1)
-
-
-            grads = tape.gradient(train_loss , model.trainable_weights)
+#                 # Compute the loss value for this minibatch.
+#                 l1 = lm_loss(x_batch_train[0], H[0], H[1],n_ctx = n_ctx)
+#                 l2 = cl_loss(y_batch_train, H[2])
+#                 train_loss = tf.reduce_mean(l2) + l* tf.reduce_mean(l1)
 
 
-            optimizer.apply_gradients(zip(grads, model.trainable_weights))
-            l_cum[0] = tf.reduce_mean(l2)
-            l_cum = np.roll(l_cum, 1)
+#             grads = tape.gradient(train_loss , model.trainable_weights)
 
-            sys.stdout.write('\r'+("epoch: " + str(epoch+1) + " step: " +str(step+1) + "/" + str(train.cardinality().numpy()) + " loss: " + str(np.sum(l_cum)/25) + " memory: " + str(round(tf.config.experimental.get_memory_info('GPU:0')["current"]*1e-6)) + "   "))
+
+#             optimizer.apply_gradients(zip(grads, model.trainable_weights))
+#             l_cum[0] = tf.reduce_mean(l2)
+#             l_cum = np.roll(l_cum, 1)
+
+#             sys.stdout.write('\r'+("epoch: " + str(epoch+1) + " step: " +str(step+1) + "/" + str(train.cardinality().numpy()) + " loss: " + str(np.sum(l_cum)/25) + " memory: " + str(round(tf.config.experimental.get_memory_info('GPU:0')["current"]*1e-6)) + "   "))
             
-    print(" val:"+acc_(model,validation))
-    print(" train:"+acc_(model,train))
-end = time.time()
-print(end - start)
-print(round(tf.config.experimental.get_memory_info('GPU:0')["peak"]*1e-6) )
+#     print(" val:"+acc_(model,validation))
+#     print(" train:"+acc_(model,train))
+# end = time.time()
+# print(end - start)
+# print(round(tf.config.experimental.get_memory_info('GPU:0')["peak"]*1e-6) )
         
     
 
