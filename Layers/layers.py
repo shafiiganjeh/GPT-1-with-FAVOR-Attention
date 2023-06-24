@@ -1,6 +1,23 @@
+
 import tensorflow as tf
 import numpy as np
 from .util import shape_list,gelu,swish,act_fns
+
+
+def Attention_scaling(qs, ks):
+    rhs = tf.cumsum(ks, axis=0)
+    return tf.einsum("lbhm,lbhm->lbh", qs, rhs)
+
+"""
+currently not well implemented
+"""
+def Attention_matrix(qs, ks, vs):
+    rhs = tf.expand_dims(ks, axis=-2) * tf.expand_dims(vs, axis=-1)  # [L,B,H,D,M]
+    rhs = tf.cumsum(rhs, axis=0)
+    return tf.linalg.matvec(rhs, qs)
+"""
+-----------------------------------------------
+"""
 
 class norm(tf.keras.layers.Layer):
   def __init__(self, 
@@ -147,7 +164,7 @@ class conv1d_LoRA(tf.keras.layers.Layer):
         self,
         nf,
         rf = 1,
-        R = 4,
+        lora_dim = 4,
         scale = 32,
         w_init = tf.random_normal_initializer(stddev=0.02),
         b_init = tf.constant_initializer(0),
@@ -161,7 +178,7 @@ class conv1d_LoRA(tf.keras.layers.Layer):
         self.b_init = b_init
         self.pad = pad
         self.train = train
-        self.R = R
+        self.R = lora_dim
         self.scale = scale 
         
 
@@ -198,8 +215,6 @@ class conv1d_LoRA(tf.keras.layers.Layer):
         return c
     
     
-    
-    
 class MHA(tf.keras.layers.Layer):
     def __init__(
         self,
@@ -207,9 +222,13 @@ class MHA(tf.keras.layers.Layer):
         key_dim,
         pdrop = 0.0,
         rdrop = 0.0,
+        random_features = None,
         scale = False,
         train = False,
         LoRA = False,
+        lora_dim = None,
+        FAVOR = False,
+        seed = 1337,
         **kwargs,
     ):
         super(MHA,self).__init__(**kwargs)
@@ -220,18 +239,29 @@ class MHA(tf.keras.layers.Layer):
         self.scale = scale
         self.train = train
         self.LoRA = LoRA
+        self.lora_dim = lora_dim
+        self.FAVOR = FAVOR
+        self.random_features = random_features
+        if seed == None:
+            self.seed = 0
+        else:
+            self.seed = seed
         
     def build(self, x):
         assert self.key_dim % self.num_heads == 0, "K/Q dimension not divisible by number of heads"
         if self.LoRA:
-            self.conv_inp = conv1d_LoRA(nf = self.key_dim*3, train = self.train)
-            self.conv_out = conv1d_LoRA(nf = self.key_dim, train = self.train)
+            self.conv_inp = conv1d_LoRA(nf = self.key_dim*3, train = self.train,lora_dim = self.lora_dim)
+            self.conv_out = conv1d_LoRA(nf = self.key_dim, train = self.train,lora_dim = self.lora_dim)
         else:
             self.conv_inp = conv1d(nf = self.key_dim*3, train = self.train)
             self.conv_out = conv1d(nf = self.key_dim, train = self.train)
-            
-        self.mask = mask()
         
+        if self.FAVOR == False:
+            self.mask = mask()
+        else:
+            self.random_matrix = tf.keras.initializers.Orthogonal(seed = self.seed)
+            
+
     def split_states(self,x, n):
         x_shape = shape_list(x)
         m = x_shape[-1]
@@ -246,7 +276,7 @@ class MHA(tf.keras.layers.Layer):
     def split_heads(self,x, n, k=False):
         return tf.transpose(self.split_states(x, n), [0, 2, 1, 3])
         
-    def _attn(self,q, k, v, train=False):
+    def _attn(self,q, k, v):
         w = tf.einsum('...ij,...kj->...ik', q, k)
         if self.scale:
             n_state = shape_list(v)[-1]
@@ -265,6 +295,20 @@ class MHA(tf.keras.layers.Layer):
         x_shape = shape_list(x)
         new_x_shape = x_shape[:-2]+[np.prod(x_shape[-2:])]
         return tf.reshape(x, new_x_shape)
+    
+    def RFM_softmax(self,sequence,omega,D,query = False):
+        e = 1e-07
+        D = tf.math.rsqrt(tf.dtypes.cast(D,tf.float32))
+        sequence = sequence * tf.math.rsqrt(tf.math.sqrt(tf.dtypes.cast(tf.shape(sequence)[-1],tf.float32)))
+        sequence = tf.einsum("bhld,fd->bhlf", sequence, omega) 
+        diag_data = tf.math.square(sequence)
+        diag_data = tf.math.reduce_sum(sequence, axis=tf.keras.backend.ndim(sequence) - 1) / 2.0
+        diag_data = tf.expand_dims(diag_data, axis=tf.keras.backend.ndim(sequence) - 1)
+        if query:
+          sequence = D * (tf.math.exp(sequence - diag_data) + e)
+        else:
+          sequence = D * (tf.math.exp(sequence - diag_data) + e)
+        return sequence
         
     def call(self, x):
         x = self.conv_inp(x)
@@ -274,12 +318,27 @@ class MHA(tf.keras.layers.Layer):
         k = self.split_heads(k, self.num_heads)
         v = self.split_heads(v, self.num_heads)
         
-        a = self._attn(q, k, v, train = self.train)
+        if self.FAVOR:
+            
+            rm = self.random_matrix(shape=(self.random_features, tf.shape(q)[-1]))
+            q = self.RFM_softmax(sequence = q,omega = rm,D = self.random_features,query = True)
+            k = self.RFM_softmax(sequence = k,omega = rm,D = self.random_features)
+            q = tf.transpose(q, [2, 0, 1, 3])  
+            k = tf.transpose(k, [2, 0, 1, 3])  
+            v = tf.transpose(v, [2, 0, 1, 3])  
+            a = Attention_matrix(q, k, v)
+            D = Attention_scaling(q, k)
+            D = tf.expand_dims(D, axis=-1)
+            a = a / D
+            a = tf.transpose(a, [1, 2, 0, 3]) 
+            
+        else:
+            a = self._attn(q, k, v)
+
         a = self.merge_heads(a)
         a = self.conv_out(a)
         a = self.dropout(a,drop = self.rdrop )
         return a
-    
     
     
 class MLP(tf.keras.layers.Layer):
@@ -289,7 +348,8 @@ class MLP(tf.keras.layers.Layer):
         train,
         mdrop = 0.,
         LoRA = False,
-        afn = 'gelu'
+        afn = 'gelu',
+        lora_dim = None
     ):
         super(MLP, self).__init__()
         self.afn = afn
@@ -297,14 +357,15 @@ class MLP(tf.keras.layers.Layer):
         self.n_state = n_state
         self.drop = mdrop
         self.LoRA = LoRA
+        self.lora_dim = lora_dim 
         
 
     def build(self, x):
         self.nx = x[-1]
         self.act = act_fns[self.afn]
         if self.LoRA:
-            self.c_fc = conv1d_LoRA(nf = self.n_state, train = self.train, rf = 1)
-            self.c_proj = conv1d_LoRA(nf = self.nx, train = self.train, rf = 1)
+            self.c_fc = conv1d_LoRA(nf = self.n_state, train = self.train, rf = 1,lora_dim = self.lora_dim)
+            self.c_proj = conv1d_LoRA(nf = self.nx, train = self.train, rf = 1,lora_dim = self.lora_dim)
         else:
             self.c_fc = conv1d(nf = self.n_state, train = self.train, rf = 1)
             self.c_proj = conv1d(nf = self.nx, train = self.train, rf = 1)
@@ -329,8 +390,11 @@ class block(tf.keras.layers.Layer):
                pdrop = .0,
                rdrop = .0,
                mdrop = .0,
+               lora_dim = None,
                scale = True,
-               LoRA = False
+               LoRA = False,
+               FAVOR = False,
+               random_features = None
                ):
     super(block, self).__init__()
     self.train = train
@@ -340,17 +404,21 @@ class block(tf.keras.layers.Layer):
     self.scale = scale
     self.n_head = n_head
     self.LoRA = LoRA
+    self.lora_dim = lora_dim
+    self.FAVOR = FAVOR
+    self.random_features = random_features
 
   def build(self, x):
       nx = x[-1]
       self._mha = MHA(pdrop = self.pdrop, rdrop = self.rdrop,
                       key_dim = nx, num_heads = self.n_head, 
                       train = self.train, scale = self.scale,
-                      LoRA = self.LoRA)
+                      LoRA = self.LoRA,lora_dim = self.lora_dim,
+                      FAVOR = self.FAVOR,random_features = self.random_features)
       
       self.norm1 = norm()
       
-      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop,LoRA = self.LoRA)
+      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop,LoRA = self.LoRA,lora_dim = self.lora_dim)
       
       self.norm2 = norm()
 
@@ -361,6 +429,3 @@ class block(tf.keras.layers.Layer):
       h = self.norm2(m+n)
       return h  
 
-
-    
-    

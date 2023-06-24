@@ -15,22 +15,25 @@ import time
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--prep', type=bool, default=False)
-    parser.add_argument('--lora', type=bool, default=False)
+    parser.add_argument('--lora', type=bool, default=True)
+    parser.add_argument('--FAVOR', type=bool, default=True)
+    parser.add_argument('--random_features', type=int, default=32)
     parser.add_argument('--save_dir', type=str, default='Files/')
     parser.add_argument('--data_dir', type=str, default='Files/')
     parser.add_argument('--val_name', type=str, default='cloze_test_val__spring2016 - cloze_test_ALL_val.csv')
     parser.add_argument('--test_name', type=str, default='cloze_test_test__spring2016 - cloze_test_ALL_test.csv')
-    parser.add_argument('--n_ctx', type=int, default=512)
+    parser.add_argument('--n_ctx', type=int, default=77)
+    parser.add_argument('--lora_dim', type=int, default=4   )
     parser.add_argument('--n_embd', type=int, default=768)
     parser.add_argument('--n_head', type=int, default=12)
     parser.add_argument('--n_layer', type=int, default=12)
-    parser.add_argument('--batch', type=int, default=16)
+    parser.add_argument('--batch', type=int, default=18)
     parser.add_argument('--freeze_emb', type=bool, default=True)
     parser.add_argument('--afn', type=str, default='gelu')
     parser.add_argument('--n_train', type=int, default=1497)
     parser.add_argument('--n_valid', type=int, default=374)
-    parser.add_argument('--epochs', type=int, default=4)
-    parser.add_argument('--l', type=float, default=.5)
+    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--l', type=float, default=1)
     args = parser.parse_args()
     print(args)
     globals().update(args.__dict__)
@@ -80,73 +83,84 @@ if __name__ == '__main__':
         validation = tf.data.Dataset.load(save_dir + "/val")
         
     validation = validation.batch(batch)
-        
+
     model = tGPT(n_vocab = n_vocab,n_special = n_special, n_ctx = n_ctx, 
                  n_embd = n_embd,clf_token = clf_token,train = True,freeze_emb = freeze_emb,
-                 n_head = n_head,n_layer = n_layer, LoRA = lora)
-    if lora:
-        learning_rate = ExpSchedule(warmup_steps = 20,decay = .005,lr = 6.25e-4)
+                 n_head = n_head,n_layer = n_layer, LoRA = lora,lora_dim = lora_dim,
+                 FAVOR = FAVOR, random_features = random_features)
+    if FAVOR:
+        if lora:
+            learning_rate = ExpSchedule(warmup_steps = 20,decay = .008,lr = 1e-3)
+            weight_decay = 0.01
+        else:
+            learning_rate = LinearSchedule(warmup_steps = 4,decay = 93*8,lr = 8e-5)
+            weight_decay = None
     else:
-        learning_rate = LinearSchedule(warmup_steps = 93,decay = 93*5,lr = 6.25e-5)
+        if lora:
+            learning_rate = ExpSchedule(warmup_steps = 20,decay = .005,lr = 6.25e-4)
+            weight_decay = 0.01
+        else:
+            learning_rate = LinearSchedule(warmup_steps = 4,decay = 93*5,lr = 6.25e-5)
+            weight_decay = None
+        
     
+
     optimizer= tf.keras.optimizers.Adam(
                                             learning_rate = learning_rate,
                                             beta_1=0.9,
                                             beta_2=0.999,
                                             epsilon=1e-08,
-                                            weight_decay=0.01,
+                                            weight_decay=weight_decay,
                                             clipvalue=1,
                                             global_clipnorm=1,
                                             jit_compile=True,
                                         )
     
-    # import matplotlib.pyplot as plt
-    # plt.plot(learning_rate(tf.range(93*4, dtype=tf.float32)))
-    # plt.ylabel('Learning Rate')
-    # plt.xlabel('Train Step')
 
     for i in validation.take(1):x = i
 
     h = model(x[0])
     model.summary()
-    
-    
-    model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd, freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, weights_path = data_dir, names_path = data_dir)
-#     start = time.time()
-#     for epoch in range(epochs):
-#         train = train_ds.shuffle(5000).batch(batch)
 
-#         print(" val:"+acc_(model,validation))
-#         print(" train:"+acc_(model,train))
+    model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd,
+                         freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, 
+                         weights_path = "/home/borz/Desktop/proj/weights_FAVOR", names_path = data_dir,FAVOR = FAVOR, LoRA = lora)
+    
+    start = time.time()
+    for epoch in range(epochs):
+        train = train_ds.shuffle(5000).batch(batch)
+
+        print(" val:"+acc_(model,validation))
+        print(" train:"+acc_(model,train))
         
-#         l_cum = np.zeros(10)
+        l_cum = np.zeros(10)
   
-#         for step, (x_batch_train, y_batch_train) in enumerate(train):
+        for step, (x_batch_train, y_batch_train) in enumerate(train):
 
-#             with tf.GradientTape() as tape:
+            with tf.GradientTape() as tape:
 
-#                 H = model(x_batch_train, training=True)  # Logits for this minibatch
+                H = model(x_batch_train, training=True)  # Logits for this minibatch
 
-#                 # Compute the loss value for this minibatch.
-#                 l1 = lm_loss(x_batch_train[0], H[0], H[1],n_ctx = n_ctx)
-#                 l2 = cl_loss(y_batch_train, H[2])
-#                 train_loss = tf.reduce_mean(l2) + l* tf.reduce_mean(l1)
-
-
-#             grads = tape.gradient(train_loss , model.trainable_weights)
+                # Compute the loss value for this minibatch.
+                l1 = lm_loss(x_batch_train[0], H[0], H[1],n_ctx = n_ctx)
+                l2 = cl_loss(y_batch_train, H[2])
+                train_loss = tf.reduce_mean(l2) + l* tf.reduce_mean(l1)
 
 
-#             optimizer.apply_gradients(zip(grads, model.trainable_weights))
-#             l_cum[0] = tf.reduce_mean(l2)
-#             l_cum = np.roll(l_cum, 1)
+            grads = tape.gradient(train_loss , model.trainable_weights)
 
-#             sys.stdout.write('\r'+("epoch: " + str(epoch+1) + " step: " +str(step+1) + "/" + str(train.cardinality().numpy()) + " loss: " + str(np.sum(l_cum)/25) + " memory: " + str(round(tf.config.experimental.get_memory_info('GPU:0')["current"]*1e-6)) + "   "))
+
+            optimizer.apply_gradients(zip(grads, model.trainable_weights))
+            l_cum[0] = tf.reduce_mean(l2)
+            l_cum = np.roll(l_cum, 1)
+
+            sys.stdout.write('\r'+("epoch: " + str(epoch+1) + " step: " +str(step+1) + "/" + str(train.cardinality().numpy()) + " loss: " + str(np.sum(l_cum)/25) + " memory: " + str(round(tf.config.experimental.get_memory_info('GPU:0')["current"]*1e-6)) + "   "))
             
-#     print(" val:"+acc_(model,validation))
-#     print(" train:"+acc_(model,train))
-# end = time.time()
-# print(end - start)
-# print(round(tf.config.experimental.get_memory_info('GPU:0')["peak"]*1e-6) )
+    print(" val:"+acc_(model,validation))
+    print(" train:"+acc_(model,train))
+end = time.time()
+print(end - start)
+print(round(tf.config.experimental.get_memory_info('GPU:0')["peak"]*1e-6) )
         
     
 

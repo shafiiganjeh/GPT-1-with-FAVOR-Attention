@@ -13,6 +13,7 @@ class tGPT(tf.keras.Model):
         n_ctx,
         n_embd,
         clf_token,
+        lora_dim = 4,
         n_head = 12,
         n_layer = 12,
         pdrop = .1,
@@ -20,9 +21,11 @@ class tGPT(tf.keras.Model):
         mdrop = .1,
         clf_pdrop = .1,
         train = True,
-        freeze_emb = True,
+        freeze_emb = False,
         scale = True,
-        LoRA = False
+        LoRA = False,
+        FAVOR = False,
+        random_features = None
     ):
         super().__init__()
         self.train = train  
@@ -36,7 +39,7 @@ class tGPT(tf.keras.Model):
         self.outp = None
         
         self.embed = embedding(n_vocab = n_vocab ,n_special = n_special, 
-                               n_ctx = self.n_ctx, n_embd = self.n_embd,freeze_emb = freeze_emb)
+                                n_ctx = self.n_ctx, n_embd = self.n_embd,freeze_emb = freeze_emb)
         
         
         self._block = [None]*self.n_layer
@@ -45,8 +48,8 @@ class tGPT(tf.keras.Model):
             self._block[i] = block(train = self.train,n_head = self.n_head,
                           mdrop = mdrop,pdrop = pdrop,
                           rdrop = rdrop,scale = scale,
-                          LoRA = LoRA
-                          )
+                          LoRA = LoRA,lora_dim = lora_dim,FAVOR = FAVOR,
+                          random_features = random_features)
             
         self.clf = tf.keras.layers.Dense(1,bias_initializer = 'zeros',kernel_initializer = tf.random_normal_initializer(stddev=0.02, seed=123))
 
@@ -83,5 +86,67 @@ class tGPT(tf.keras.Model):
             
 
         return [lm_logits,M,clf_logits]
+
+class Finetune_tGPT(tf.keras.Model):
+    def __init__(
+        self,
+        n_vocab,
+        n_special,
+        n_ctx,
+        n_embd,
+        n_head = 12,
+        n_layer = 12,
+        pdrop = .1,
+        rdrop = .1,
+        mdrop = .1,
+        clf_pdrop = .1,
+        train = True,
+        freeze_emb = True,
+        scale = True,
+        LoRA = False,
+        FAVOR = False,
+        random_features = None
+    ):
+        super().__init__()
+        self.train = train  
+        self.n_head = n_head 
+        self.n_ctx = n_ctx
+        self.n_embd = n_embd
+        self.n_layer = n_layer
+        self.clf_pdrop = clf_pdrop
+        
+        self.outp = None
+        
+        self.embed = embedding(n_vocab = n_vocab ,n_special = n_special, 
+                                n_ctx = self.n_ctx, n_embd = self.n_embd,freeze_emb = freeze_emb)
+        
+        
+        self._block = [None]*self.n_layer
+        
+        for i in range(self.n_layer ):
+            self._block[i] = block(train = self.train,n_head = self.n_head,
+                          mdrop = mdrop,pdrop = pdrop,
+                          rdrop = rdrop,scale = scale,
+                          LoRA = LoRA,FAVOR = FAVOR,
+                          random_features = random_features)
+
+    
+    def call(self, x):
+        X = x[0]
+        M = x[1]
+        # assert X.shape[0] == self.n_ctx , "input shape missmatch"
+        
+        
+        h = self.embed(X)[0]
+        W = self.embed(X)[1]
+        
+        for i in range(self.n_layer):
+            h = self._block[i](h)
+            
+        lm_h = tf.reshape(h[:, :-1], [-1, self.n_embd])
+        lm_logits = tf.matmul(lm_h, W, transpose_b=True)
+        
+
+        return [lm_logits,M]
 
 

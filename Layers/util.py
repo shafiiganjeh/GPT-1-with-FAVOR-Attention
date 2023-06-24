@@ -56,13 +56,19 @@ def shape_list(x):
     return [ts[i] if ps[i] is None else ps[i] for i in range(len(ps))]
 
 
-def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights", names_path = "./weights",LoRA = False):
+def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True,weights_shapes_path =  "./weights", weights_path = "./weights", names_path = "./weights",LoRA = False,FAVOR = False):
     L = [[i.name for i in j.weights[:]] for j in model.layers[:]]
     # names = {}
     np.random.seed(123)
     shapes = json.load(open(weights_shapes_path+"/params_shapes.json"))
     offsets = np.cumsum([np.prod(shape) for shape in shapes])
-    init_params = [np.load(weights_path+"/params_{}.npy".format(n)) for n in range(10)]
+    if FAVOR: 
+        init_params = [np.load(weights_path+"/{}.npy".format(n)) for n in range(147)]
+        init_params = init_params[1:]
+        for i in range(len(init_params)):
+            init_params[i] = init_params[i].flatten()
+    else:
+        init_params = [np.load(weights_path+"/params_{}.npy".format(n)) for n in range(10)]
     init_params = np.split(np.concatenate(init_params, 0), offsets)[:-1]
     init_params = [param.reshape(shape) for param, shape in zip(init_params, shapes)]
     init_params[0] = init_params[0][:n_ctx]
@@ -78,9 +84,11 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
     assg = 0
     for n in range(len(init_params)):
         if LoRA == False:
-           print(NAMES[str(n)])
+           # print(NAMES[str(n)])
            T = NAMES[str(n)].replace("__lo_ra","") 
-           print(T)
+           # print(T)
+        else:
+           T = NAMES[str(n)] 
         for I,i in enumerate(L):
             for J,j in enumerate(i):
                 if T in j:
@@ -89,6 +97,7 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
     print("weights assigned: " + str(assg) + "/" + str(len(init_params)))           
 
     return model
+
 
 @tf.function
 def lm_loss(label, pred, M,n_ctx = 512):
