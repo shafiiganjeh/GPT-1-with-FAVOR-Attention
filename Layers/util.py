@@ -98,6 +98,41 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
 
     return model
 
+def save_weights_lora(model, path):
+    names = {}
+    c = 0
+    for I,i in enumerate(model.layers):
+        for J,j in enumerate(model.layers[I].weights):
+            if ("LoRA" in model.layers[I].weights[J].name):
+                np.save(path+"/lora"+str(c)+".npy", model.layers[I].weights[J].numpy(), allow_pickle=False)
+                names[str(c)] = model.layers[I].weights[J].name[model.layers[I].weights[J].name.find("/"):]
+                c = c+1
+            elif ("embedding" in model.layers[I].weights[J].name) and model.layers[I].weights[J].trainable:
+                np.save(path+"/lora"+str(c)+".npy", model.layers[I].weights[J].numpy(), allow_pickle=False)
+                names[str(c)] = model.layers[I].weights[J].name[model.layers[I].weights[J].name.find("/"):]
+                c = c+1
+    with open(path + '/names.json', 'w') as fp:
+        json.dump(names, fp)
+    return names
+
+
+def load_weights_lora(model, path):
+    L = [[i.name for i in j.weights[:]] for j in model.layers[:]]
+    with open(path+'/names.json', 'r') as openfile:
+        NAMES = json.load(openfile)
+    assg = 0
+    init_params = [np.load(path+"/lora{}.npy".format(n)) for n in range(len(NAMES))]
+        
+    for n in range(len(NAMES)):
+        T = NAMES[str(n)]
+        for I,i in enumerate(L):
+            for J,j in enumerate(i):
+                if T in j:
+                    model.layers[I].weights[J].assign(init_params[n])
+                    assg = assg + 1
+    print("weights assigned: " + str(assg) + "/" + str(len(init_params)))  
+    
+    return model
 
 @tf.function
 def lm_loss(label, pred, M,n_ctx = 512):
@@ -110,6 +145,7 @@ def lm_loss(label, pred, M,n_ctx = 512):
 @tf.function
 def cl_loss(label, pred):
     return tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=label)
+
 
 
 

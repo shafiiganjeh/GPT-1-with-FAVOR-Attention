@@ -2,6 +2,7 @@ import re
 import ftfy
 import json
 import spacy
+import numpy as np
 
 from tqdm import tqdm
 
@@ -56,6 +57,7 @@ class TextEncoder(object):
         merges = [tuple(merge.split()) for merge in merges]
         self.bpe_ranks = dict(zip(merges, range(len(merges))))
         self.cache = {}
+        self.asd = 10
 
     def bpe(self, token):
         word = tuple(token[:-1]) + ( token[-1] + '</w>',)
@@ -118,6 +120,18 @@ class TextEncoder(object):
                 texts_tokens.append(text_tokens)
         return texts_tokens
     
+    def mask(self, tokens, n_ctx = 512,verbose=True):
+        
+        conv = []
+        mask = []
+        if verbose:
+            for text in tqdm(tokens, ncols=80, leave=False):
+                assert len(text) <= n_ctx, "tokens length surpasses maximum length"
+                mask.append(np.asarray([1]*int(len(text)) + [0]*int(n_ctx - len(text)),dtype = np.float32))
+                m = np.asarray(text + [0]*int(n_ctx - len(text)), dtype = np.int32)         
+                conv.append(np.concatenate(([m],[np.arange(len(self.encoder),len(self.encoder) + n_ctx,1, dtype = np.int32)]), axis = 0).T)
+        return (conv,mask)
+    
     
     def decode(self, tokens, verbose=False):
         text_tokens = ""
@@ -126,4 +140,8 @@ class TextEncoder(object):
             text_tokens += text
         text_tokens = text_tokens.replace('</w>', ' ')
         return text_tokens
+    
+    
+
+
 

@@ -19,6 +19,7 @@ def Attention_matrix(qs, ks, vs):
 -----------------------------------------------
 """
 
+
 class norm(tf.keras.layers.Layer):
   def __init__(self, 
                axis = [-1],
@@ -297,18 +298,23 @@ class MHA(tf.keras.layers.Layer):
         return tf.reshape(x, new_x_shape)
     
     def RFM_softmax(self,sequence,omega,D,query = False):
-        e = 1e-07
+        e = 1e-06
         D = tf.math.rsqrt(tf.dtypes.cast(D,tf.float32))
         sequence = sequence * tf.math.rsqrt(tf.math.sqrt(tf.dtypes.cast(tf.shape(sequence)[-1],tf.float32)))
         sequence = tf.einsum("bhld,fd->bhlf", sequence, omega) 
         diag_data = tf.math.square(sequence)
         diag_data = tf.math.reduce_sum(sequence, axis=tf.keras.backend.ndim(sequence) - 1) / 2.0
         diag_data = tf.expand_dims(diag_data, axis=tf.keras.backend.ndim(sequence) - 1)
+        
+        last_dims_t = (len(sequence.shape) - 1,)
+        attention_dims_t = (len(sequence.shape) - 3,)
+        
         if query:
-          sequence = D * (tf.math.exp(sequence - diag_data) + e)
+          sequence = D * (tf.math.exp(sequence - diag_data - tf.math.reduce_max(sequence, axis=last_dims_t, keepdims=True)) + e)
         else:
-          sequence = D * (tf.math.exp(sequence - diag_data) + e)
+          sequence = D * (tf.math.exp(sequence - diag_data - tf.math.reduce_max(sequence, axis=last_dims_t + attention_dims_t, keepdims=True)) + e)
         return sequence
+    
         
     def call(self, x):
         x = self.conv_inp(x)
@@ -329,7 +335,7 @@ class MHA(tf.keras.layers.Layer):
             a = Attention_matrix(q, k, v)
             D = Attention_scaling(q, k)
             D = tf.expand_dims(D, axis=-1)
-            a = a / D
+            a = a / (D+1e-6)
             a = tf.transpose(a, [1, 2, 0, 3]) 
             
         else:

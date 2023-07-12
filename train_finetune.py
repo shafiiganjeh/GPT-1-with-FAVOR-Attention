@@ -2,8 +2,8 @@ import argparse
 import sys
 import tensorflow as tf
 from TXT import*
-from Model import Finetune_tGPT
-from Layers import ExpSchedule,LinearSchedule,load_weights,lm_loss,cl_loss
+from Model import Base_GPT
+from Layers import ExpSchedule,LinearSchedule,load_weights,lm_loss,cl_loss,save_weights_lora,load_weights_lora
 from sklearn.metrics import accuracy_score
 
 import time
@@ -12,7 +12,7 @@ import time
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--FAVOR', type=bool, default=True)
-    parser.add_argument('--random_features', type=int, default=32)
+    parser.add_argument('--random_features', type=int, default=64)
     parser.add_argument('--data_dir', type=str, default='Files/')
     parser.add_argument('--n_ctx', type=int, default=512)
     parser.add_argument('--n_embd', type=int, default=768)
@@ -20,7 +20,6 @@ if __name__ == '__main__':
     parser.add_argument('--n_layer', type=int, default=12)
     parser.add_argument('--batch', type=int, default=4)
     parser.add_argument('--freeze_emb', type=bool, default=True)
-    parser.add_argument('--afn', type=str, default='gelu')
     parser.add_argument('--epochs', type=int, default=1)
     args = parser.parse_args()
     print(args)
@@ -30,7 +29,7 @@ if __name__ == '__main__':
     encoder = text_encoder.encoder
     n_vocab = len(text_encoder.encoder)
     
-    
+
     def acc_(model,ds):
         c = 0
         counter = 0
@@ -46,13 +45,11 @@ if __name__ == '__main__':
     val = tf.data.Dataset.load(data_dir + "/fine").batch(batch)
     
 
-        
-
-    model = Finetune_tGPT(n_vocab = n_vocab,n_special = 0, n_ctx = n_ctx, 
+    model = Base_GPT(n_vocab = n_vocab,n_special = 0, n_ctx = n_ctx, 
                   n_embd = n_embd,train = True,freeze_emb = freeze_emb,
                   n_head = n_head,n_layer = n_layer, LoRA = False,FAVOR = FAVOR, random_features = random_features)
 
-    learning_rate = LinearSchedule(warmup_steps = 100,decay = 8000,lr = 6.25e-5)
+    learning_rate = LinearSchedule(warmup_steps = 100,decay = 13000,lr = 6.25e-5)
     
     optimizer= tf.keras.optimizers.Adam(
                                             learning_rate = learning_rate,
@@ -71,6 +68,7 @@ if __name__ == '__main__':
     h = model(x)
     model.summary()
     
+    names = save_weights_lora(model, "/home/borz/Desktop/teeest")
     c = 0
     names = {}
     
@@ -109,13 +107,12 @@ if __name__ == '__main__':
         for J,j in enumerate(model.layers[I].weights):
             np.save("/home/borz/Desktop/proj/weights_FAVOR/"+str(c)+".npy", model.layers[I].weights[J].numpy(), allow_pickle=False)
             names[str(c)] = model.layers[I].weights[J].name
-            # print(model.layers[I].weights[J].numpy())
             c = c+1
             
-    import json
+    # import json
 
-    with open('/home/borz/Desktop/proj/weights_FAVOR/data.json', 'w') as fp:
-        json.dump(names, fp)
+    # with open('/home/borz/Desktop/proj/weights_FAVOR/data.json', 'w') as fp:
+    #     json.dump(names, fp)
     
         
     

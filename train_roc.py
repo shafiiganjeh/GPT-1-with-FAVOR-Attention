@@ -2,7 +2,7 @@ import argparse
 import sys
 import tensorflow as tf
 from TXT import*
-from Model import tGPT
+from Model import GPT
 from Layers import ExpSchedule,LinearSchedule,load_weights,lm_loss,cl_loss
 from sklearn.metrics import accuracy_score
 
@@ -15,24 +15,24 @@ import time
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--prep', type=bool, default=False)
-    parser.add_argument('--lora', type=bool, default=True)
-    parser.add_argument('--FAVOR', type=bool, default=True)
-    parser.add_argument('--random_features', type=int, default=32)
+    parser.add_argument('--lora', type=bool, default=False)
+    parser.add_argument('--FAVOR', type=bool, default=False)
+    parser.add_argument('--random_features', type=int, default=64)
     parser.add_argument('--save_dir', type=str, default='Files/')
     parser.add_argument('--data_dir', type=str, default='Files/')
     parser.add_argument('--val_name', type=str, default='cloze_test_val__spring2016 - cloze_test_ALL_val.csv')
     parser.add_argument('--test_name', type=str, default='cloze_test_test__spring2016 - cloze_test_ALL_test.csv')
     parser.add_argument('--n_ctx', type=int, default=77)
-    parser.add_argument('--lora_dim', type=int, default=4   )
+    parser.add_argument('--lora_dim', type=int, default=4  )
     parser.add_argument('--n_embd', type=int, default=768)
     parser.add_argument('--n_head', type=int, default=12)
     parser.add_argument('--n_layer', type=int, default=12)
-    parser.add_argument('--batch', type=int, default=18)
+    parser.add_argument('--batch', type=int, default=8)
     parser.add_argument('--freeze_emb', type=bool, default=True)
     parser.add_argument('--afn', type=str, default='gelu')
     parser.add_argument('--n_train', type=int, default=1497)
     parser.add_argument('--n_valid', type=int, default=374)
-    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--epochs', type=int, default=2)
     parser.add_argument('--l', type=float, default=1)
     args = parser.parse_args()
     print(args)
@@ -79,12 +79,12 @@ if __name__ == '__main__':
     else:
         n_ctx = 77
         n_special = 3
-        train_ds = tf.data.Dataset.load(save_dir + "/train")
-        validation = tf.data.Dataset.load(save_dir + "/val")
+        train_ds = tf.data.Dataset.load(save_dir + "/train",element_spec=((tf.TensorSpec(shape=(2, 77, 2), dtype=tf.int32, name=None), tf.TensorSpec(shape=(2, 77), dtype=tf.float32, name=None)), tf.TensorSpec(shape=(), dtype=tf.int32, name=None)))
+        validation = tf.data.Dataset.load(save_dir + "/val",element_spec=((tf.TensorSpec(shape=(2, 77, 2), dtype=tf.int32, name=None), tf.TensorSpec(shape=(2, 77), dtype=tf.float32, name=None)), tf.TensorSpec(shape=(), dtype=tf.int32, name=None)))
         
     validation = validation.batch(batch)
 
-    model = tGPT(n_vocab = n_vocab,n_special = n_special, n_ctx = n_ctx, 
+    model = GPT(n_vocab = n_vocab,n_special = n_special, n_ctx = n_ctx, 
                  n_embd = n_embd,clf_token = clf_token,train = True,freeze_emb = freeze_emb,
                  n_head = n_head,n_layer = n_layer, LoRA = lora,lora_dim = lora_dim,
                  FAVOR = FAVOR, random_features = random_features)
@@ -93,7 +93,7 @@ if __name__ == '__main__':
             learning_rate = ExpSchedule(warmup_steps = 20,decay = .008,lr = 1e-3)
             weight_decay = 0.01
         else:
-            learning_rate = LinearSchedule(warmup_steps = 4,decay = 93*8,lr = 8e-5)
+            learning_rate = LinearSchedule(warmup_steps = 4,decay = 93*8,lr = 3.5e-5)
             weight_decay = None
     else:
         if lora:
@@ -103,7 +103,8 @@ if __name__ == '__main__':
             learning_rate = LinearSchedule(warmup_steps = 4,decay = 93*5,lr = 6.25e-5)
             weight_decay = None
         
-    
+    # element_spec=((TensorSpec(shape=(16, 2, 77, 2), dtype=tf.int32),TensorSpec(shape=(16, 2, 77), dtype=tf.float32)),TensorSpec(shape=(16,), dtype=tf.int32))
+    # ((TensorSpec(shape=(16, 2, 77, 2), dtype=tf.int32),TensorSpec(shape=(16, 2, 77), dtype=tf.float32)),TensorSpec(shape=(16,), dtype=tf.int32))
 
     optimizer= tf.keras.optimizers.Adam(
                                             learning_rate = learning_rate,
@@ -115,7 +116,7 @@ if __name__ == '__main__':
                                             global_clipnorm=1,
                                             jit_compile=True,
                                         )
-    
+  
 
     for i in validation.take(1):x = i
 
@@ -123,8 +124,8 @@ if __name__ == '__main__':
     model.summary()
 
     model = load_weights(model,n_ctx = n_ctx,n_special = n_special , n_embd = n_embd,
-                         freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, 
-                         weights_path = "/home/borz/Desktop/proj/weights_FAVOR", names_path = data_dir,FAVOR = FAVOR, LoRA = lora)
+                          freeze_emb = freeze_emb ,weights_shapes_path =  data_dir, 
+                          weights_path = data_dir, names_path = data_dir,FAVOR = FAVOR, LoRA = lora)
     
     start = time.time()
     for epoch in range(epochs):
