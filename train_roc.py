@@ -27,7 +27,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_embd', type=int, default=768)
     parser.add_argument('--n_head', type=int, default=12)
     parser.add_argument('--n_layer', type=int, default=12)
-    parser.add_argument('--batch', type=int, default=8)
+    parser.add_argument('--batch', type=int, default=16)
     parser.add_argument('--freeze_emb', type=bool, default=True)
     parser.add_argument('--afn', type=str, default='gelu')
     parser.add_argument('--n_train', type=int, default=1497)

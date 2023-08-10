@@ -3,7 +3,7 @@ import tensorflow as tf
 import numpy as np
 from .util import shape_list,gelu,swish,act_fns
 
-
+@tf.function(jit_compile=True)
 def Attention_scaling(qs, ks):
     rhs = tf.cumsum(ks, axis=0)
     return tf.einsum("lbhm,lbhm->lbh", qs, rhs)
@@ -11,6 +11,7 @@ def Attention_scaling(qs, ks):
 """
 currently not well implemented
 """
+@tf.function(jit_compile=True)
 def Attention_matrix(qs, ks, vs):
     rhs = tf.expand_dims(ks, axis=-2) * tf.expand_dims(vs, axis=-1)  # [L,B,H,D,M]
     rhs = tf.cumsum(rhs, axis=0)
@@ -23,16 +24,18 @@ def Attention_matrix(qs, ks, vs):
 class norm(tf.keras.layers.Layer):
   def __init__(self, 
                axis = [-1],
-               e = 1e-5
+               e = 1e-5,
+               name_ = None
                ):
     super(norm, self).__init__()
     self.axis = axis
     self.e = e
+    self.name_ = name_
 
   def build(self, x):
       n_state = x[-1]
-      self.g = self.add_weight("g_n", shape = [n_state], initializer=tf.constant_initializer(1))
-      self.b = self.add_weight("b_n", shape = [n_state], initializer=tf.constant_initializer(0))
+      self.g = self.add_weight("g_n"+str(self.name_), shape = [n_state], initializer=tf.constant_initializer(1))
+      self.b = self.add_weight("b_n"+str(self.name_), shape = [n_state], initializer=tf.constant_initializer(0))
 
   def call(self, x):
       u = tf.math.reduce_mean(x, axis = self.axis, keepdims=True)
@@ -130,6 +133,7 @@ class conv1d(tf.keras.layers.Layer):
         b_init = tf.constant_initializer(0),
         pad = 'VALID',
         train = False,
+        name_ = None
     ):
         super(conv1d, self).__init__()
         self.rf = rf
@@ -138,13 +142,14 @@ class conv1d(tf.keras.layers.Layer):
         self.b_init = b_init
         self.pad = pad
         self.train = train
+        self.name_ = name_
 
     def build(self, x):
         self.nx = x[-1]
-        self.w = self.add_weight("conv_w", 
+        self.w = self.add_weight("conv_w"+str(self.name_), 
                                  shape = [self.rf, self.nx, self.nf], 
                                  initializer = self.w_init,trainable = self.train)
-        self.b = self.add_weight("conv_b", 
+        self.b = self.add_weight("conv_b"+str(self.name_), 
                                  shape = [self.nf], 
                                  initializer = self.b_init,trainable = self.train)
         
@@ -171,6 +176,7 @@ class conv1d_LoRA(tf.keras.layers.Layer):
         b_init = tf.constant_initializer(0),
         pad = 'VALID',
         train = False,
+        name_ = None
     ):
         super(conv1d_LoRA, self).__init__()
         self.rf = rf
@@ -181,22 +187,23 @@ class conv1d_LoRA(tf.keras.layers.Layer):
         self.train = train
         self.R = lora_dim
         self.scale = scale 
+        self.name_ = name_
         
 
     def build(self, x):
         self.nx = x[-1]
-        self.w = self.add_weight("conv_w", 
+        self.w = self.add_weight("conv_w"+str(self.name_), 
                                  shape = [self.rf, self.nx, self.nf], 
                                  initializer = self.w_init,trainable = False)
-        self.b = self.add_weight("conv_b", 
+        self.b = self.add_weight("conv_b"+str(self.name_), 
                                  shape = [self.nf], 
                                  initializer = self.b_init,trainable = self.train)
         
-        self.A = self.add_weight("LoRA_A", 
+        self.A = self.add_weight("LoRA_A"+str(self.name_), 
                                  shape = [self.rf, self.R, self.nf], 
                                  initializer = self.b_init,trainable = self.train)
         
-        self.B = self.add_weight("LoRA_B", 
+        self.B = self.add_weight("LoRA_B"+str(self.name_), 
                                  shape = [self.rf, self.nx, self.R], 
                                  initializer = tf.constant_initializer(0),trainable = self.train)
         
@@ -230,6 +237,7 @@ class MHA(tf.keras.layers.Layer):
         lora_dim = None,
         FAVOR = False,
         seed = 1337,
+        name_ = None,
         **kwargs,
     ):
         super(MHA,self).__init__(**kwargs)
@@ -243,6 +251,7 @@ class MHA(tf.keras.layers.Layer):
         self.lora_dim = lora_dim
         self.FAVOR = FAVOR
         self.random_features = random_features
+        self.name_ = name_
         if seed == None:
             self.seed = 0
         else:
@@ -251,11 +260,11 @@ class MHA(tf.keras.layers.Layer):
     def build(self, x):
         assert self.key_dim % self.num_heads == 0, "K/Q dimension not divisible by number of heads"
         if self.LoRA:
-            self.conv_inp = conv1d_LoRA(nf = self.key_dim*3, train = self.train,lora_dim = self.lora_dim)
-            self.conv_out = conv1d_LoRA(nf = self.key_dim, train = self.train,lora_dim = self.lora_dim)
+            self.conv_inp = conv1d_LoRA(nf = self.key_dim*3, train = self.train,lora_dim = self.lora_dim,name_ = self.name_+str("_inp"))
+            self.conv_out = conv1d_LoRA(nf = self.key_dim, train = self.train,lora_dim = self.lora_dim,name_ = self.name_+str("_out"))
         else:
-            self.conv_inp = conv1d(nf = self.key_dim*3, train = self.train)
-            self.conv_out = conv1d(nf = self.key_dim, train = self.train)
+            self.conv_inp = conv1d(nf = self.key_dim*3, train = self.train,name_ = self.name_+str("_inp"))
+            self.conv_out = conv1d(nf = self.key_dim, train = self.train,name_ = self.name_+str("_out"))
         
         if self.FAVOR == False:
             self.mask = mask()
@@ -355,6 +364,7 @@ class MLP(tf.keras.layers.Layer):
         mdrop = 0.,
         LoRA = False,
         afn = 'gelu',
+        name_ = None,
         lora_dim = None
     ):
         super(MLP, self).__init__()
@@ -363,18 +373,19 @@ class MLP(tf.keras.layers.Layer):
         self.n_state = n_state
         self.drop = mdrop
         self.LoRA = LoRA
-        self.lora_dim = lora_dim 
+        self.name_ = name_
+        self.lora_dim = lora_dim
         
 
     def build(self, x):
         self.nx = x[-1]
         self.act = act_fns[self.afn]
         if self.LoRA:
-            self.c_fc = conv1d_LoRA(nf = self.n_state, train = self.train, rf = 1,lora_dim = self.lora_dim)
-            self.c_proj = conv1d_LoRA(nf = self.nx, train = self.train, rf = 1,lora_dim = self.lora_dim)
+            self.c_fc = conv1d_LoRA(nf = self.n_state, train = self.train, rf = 1,lora_dim = self.lora_dim,name_ = str("_fc_")+self.name_)
+            self.c_proj = conv1d_LoRA(nf = self.nx, train = self.train, rf = 1,lora_dim = self.lora_dim,name_ = str("_proj_")+self.name_)
         else:
-            self.c_fc = conv1d(nf = self.n_state, train = self.train, rf = 1)
-            self.c_proj = conv1d(nf = self.nx, train = self.train, rf = 1)
+            self.c_fc = conv1d(nf = self.n_state, train = self.train, rf = 1,name_ = str("_fc_")+self.name_)
+            self.c_proj = conv1d(nf = self.nx, train = self.train, rf = 1,name_ = str("_proj_")+self.name_)
 
         
     def dropout(self, x, pdrop, train):
@@ -400,7 +411,8 @@ class block(tf.keras.layers.Layer):
                scale = True,
                LoRA = False,
                FAVOR = False,
-               random_features = None
+               random_features = None,
+               name_ = None
                ):
     super(block, self).__init__()
     self.train = train
@@ -413,20 +425,22 @@ class block(tf.keras.layers.Layer):
     self.lora_dim = lora_dim
     self.FAVOR = FAVOR
     self.random_features = random_features
-
+    self.name_ = name_
+    
   def build(self, x):
       nx = x[-1]
       self._mha = MHA(pdrop = self.pdrop, rdrop = self.rdrop,
                       key_dim = nx, num_heads = self.n_head, 
                       train = self.train, scale = self.scale,
                       LoRA = self.LoRA,lora_dim = self.lora_dim,
-                      FAVOR = self.FAVOR,random_features = self.random_features)
+                      FAVOR = self.FAVOR,random_features = self.random_features,
+                      name_ = str("_MHA_") + self.name_)
       
-      self.norm1 = norm()
+      self.norm1 = norm(name_ = str("_norm1_") + self.name_)
       
-      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop,LoRA = self.LoRA,lora_dim = self.lora_dim)
+      self._mlp = MLP(n_state = nx*4, train = self.train,mdrop = self.mdrop,LoRA = self.LoRA,lora_dim = self.lora_dim,name_ = str("_MLP_") + self.name_)
       
-      self.norm2 = norm()
+      self.norm2 = norm(name_ = str("_norm2_") + self.name_)
 
   def call(self, x):
       a = self._mha(x)

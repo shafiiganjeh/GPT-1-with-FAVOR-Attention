@@ -49,7 +49,7 @@ class GPT(tf.keras.Model):
                           mdrop = mdrop,pdrop = pdrop,
                           rdrop = rdrop,scale = scale,
                           LoRA = LoRA,lora_dim = lora_dim,FAVOR = FAVOR,
-                          random_features = random_features)
+                          random_features = random_features,name_ = "block_"+str(i))
             
         self.clf = tf.keras.layers.Dense(1,bias_initializer = 'zeros',kernel_initializer = tf.random_normal_initializer(stddev=0.02, seed=123))
 
@@ -128,7 +128,7 @@ class Base_GPT(tf.keras.Model):
                           mdrop = mdrop,pdrop = pdrop,
                           rdrop = rdrop,scale = scale,
                           LoRA = LoRA,lora_dim = lora_dim,FAVOR = FAVOR,
-                          random_features = random_features)
+                          random_features = random_features,name_ = "block_"+str(i))
 
     
     def call(self, x):
@@ -193,7 +193,7 @@ class MedtGPT(tf.keras.Model):
                           mdrop = mdrop,pdrop = pdrop,
                           rdrop = rdrop,scale = scale,
                           LoRA = LoRA,lora_dim = lora_dim,FAVOR = FAVOR,
-                          random_features = random_features)
+                          random_features = random_features,name_ = "block_"+str(i))
             
         self.clf = tf.keras.layers.Dense(clf_token_nr,bias_initializer = 'zeros',kernel_initializer = tf.random_normal_initializer(stddev=0.02, seed=123))
         
