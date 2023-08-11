@@ -105,6 +105,7 @@ class Base_GPT(tf.keras.Model):
         LoRA = False,
         lora_dim = 4,
         FAVOR = False,
+        raw = False,
         random_features = None
     ):
         super().__init__()
@@ -113,6 +114,7 @@ class Base_GPT(tf.keras.Model):
         self.n_ctx = n_ctx
         self.n_embd = n_embd
         self.n_layer = n_layer
+        self.raw = raw
 
         
         self.outp = None
@@ -147,7 +149,11 @@ class Base_GPT(tf.keras.Model):
         lm_logits = tf.matmul(lm_h, W, transpose_b=True)
         
 
-        return [lm_logits,M]
+        if self.raw:
+            return [lm_logits,M,h]
+        else:
+            return [lm_logits,M]
+            
 
 class MedtGPT(tf.keras.Model):
     def __init__(
