@@ -1,7 +1,9 @@
 
 import tensorflow as tf
-import numpy as np
+import tensorflow.experimental.numpy as tnp
 from .util import shape_list,gelu,swish,act_fns
+
+tnp.experimental_enable_numpy_behavior()
 
 @tf.function(jit_compile=True)
 def Attention_scaling(qs, ks):
@@ -303,7 +305,7 @@ class MHA(tf.keras.layers.Layer):
     def merge_heads(self,x):
         x = tf.transpose(x, [0, 2, 1, 3])
         x_shape = shape_list(x)
-        new_x_shape = x_shape[:-2]+[np.prod(x_shape[-2:])]
+        new_x_shape = x_shape[:-2]+[tnp.prod(x_shape[-2:], dtype=tf.int32)]
         return tf.reshape(x, new_x_shape)
     
     def RFM_softmax(self,sequence,omega,D,query = False):
