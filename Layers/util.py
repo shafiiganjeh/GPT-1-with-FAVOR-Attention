@@ -43,7 +43,7 @@ class ExpSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
   def __call__(self, step):
     step = tf.cast(step, dtype=tf.float32)
     arg1 = (step/self.warmup_steps) * self.lr
-    e = tf.math.maximum(0,step - self.warmup_steps)
+    e = tf.math.maximum(0.,step - self.warmup_steps)
     arg2 = tf.math.exp(-e*self.decay)*self.lr
 
     return tf.math.minimum(arg1, arg2)
@@ -63,8 +63,12 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
     shapes = json.load(open(weights_shapes_path+"/params_shapes.json"))
     offsets = np.cumsum([np.prod(shape) for shape in shapes])
     if FAVOR: 
-        init_params = [np.load(weights_path+"/{}.npy".format(n)) for n in range(147)]
-        init_params = init_params[1:]
+        if freeze_emb:
+            init_params = [np.load(weights_path+"/{}.npy".format(n)) for n in range(147)]
+            init_params = init_params[1:]
+        else:
+            init_params = [np.load(weights_path+"/{}.npy".format(n)) for n in range(145)]
+        
         for i in range(len(init_params)):
             init_params[i] = init_params[i].flatten()
     else:
@@ -74,12 +78,12 @@ def load_weights(model,n_ctx = 77,n_special = 3, n_embd = 768, freeze_emb = True
     init_params[0] = init_params[0][:n_ctx]
     if freeze_emb:
         init_params.insert(0, (np.random.randn(n_special, n_embd)*0.02).astype(np.float32))
-        with open(names_path+'names_emb_f.json', 'r') as openfile:
+        with open(names_path+'/names_emb_f.json', 'r') as openfile:
             NAMES = json.load(openfile)
     else:
         init_params[0] = np.concatenate([init_params[1], (np.random.randn(n_special, n_embd)*0.02).astype(np.float32), init_params[0]], 0)
         del init_params[1]
-        with open(names_path+'names_emb.json', 'r') as openfile:
+        with open(names_path+'/names_emb.json', 'r') as openfile:
             NAMES = json.load(openfile)
     assg = 0
     for n in range(len(init_params)):
