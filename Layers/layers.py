@@ -1,9 +1,10 @@
-
-import tensorflow as tf
 import tensorflow.experimental.numpy as tnp
+import tensorflow as tf
+# import numpy as np
 from .util import shape_list,gelu,swish,act_fns
 
 tnp.experimental_enable_numpy_behavior()
+
 
 @tf.function(jit_compile=True)
 def Attention_scaling(qs, ks):
@@ -311,7 +312,7 @@ class MHA(tf.keras.layers.Layer):
     def RFM_softmax(self,sequence,omega,D,query = False):
         e = 1e-06
         D = tf.math.rsqrt(tf.dtypes.cast(D,tf.float32))
-        sequence = sequence * tf.math.rsqrt(tf.math.sqrt(tf.dtypes.cast(tf.shape(sequence)[-1],tf.float32)))
+        sequence = sequence * tf.math.rsqrt(tf.math.sqrt(tf.dtypes.cast(self.key_dim/ self.num_heads,tf.float32)))
         sequence = tf.einsum("bhld,fd->bhlf", sequence, omega) 
         diag_data = tf.math.square(sequence)
         diag_data = tf.math.reduce_sum(sequence, axis=tf.keras.backend.ndim(sequence) - 1) / 2.0
@@ -337,7 +338,7 @@ class MHA(tf.keras.layers.Layer):
         
         if self.FAVOR:
             
-            rm = self.random_matrix(shape=(self.random_features, tf.shape(q)[-1]))
+            rm = self.random_matrix(shape=(self.random_features,int( self.key_dim/ self.num_heads)))
             q = self.RFM_softmax(sequence = q,omega = rm,D = self.random_features,query = True)
             k = self.RFM_softmax(sequence = k,omega = rm,D = self.random_features)
             q = tf.transpose(q, [2, 0, 1, 3])  
