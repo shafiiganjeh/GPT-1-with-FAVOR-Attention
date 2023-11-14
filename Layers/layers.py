@@ -6,7 +6,7 @@ from .util import shape_list,gelu,swish,act_fns
 tnp.experimental_enable_numpy_behavior()
 
 
-@tf.function(jit_compile=True)
+#@tf.function(jit_compile=True)
 def Attention_scaling(qs, ks):
     rhs = tf.cumsum(ks, axis=0)
     return tf.einsum("lbhm,lbhm->lbh", qs, rhs)
@@ -14,7 +14,7 @@ def Attention_scaling(qs, ks):
 """
 currently not well implemented
 """
-@tf.function(jit_compile=True)
+#@tf.function(jit_compile=True)
 def Attention_matrix(qs, ks, vs):
     rhs = tf.expand_dims(ks, axis=-2) * tf.expand_dims(vs, axis=-1)  # [L,B,H,D,M]
     rhs = tf.cumsum(rhs, axis=0)
